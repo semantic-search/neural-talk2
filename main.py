@@ -1,6 +1,8 @@
 import json
 import subprocess
 import os
+from pathlib import Path
+
 
 # imports for env kafka redis
 from dotenv import load_dotenv
@@ -62,8 +64,10 @@ for message in consumer:
     # Setting image-id to topic name(container name), so we can know which image it's currently processing
     r.set(RECEIVE_TOPIC, image_id)
 
+    folder_path = "image/"
     # set image path
-    file_path = "images/" + image_id
+    file_path = folder_path + image_id
+    Path(folder_path).mkdir(parents=True, exist_ok=True)
 
 
     with open(file_path, "wb") as fh:
