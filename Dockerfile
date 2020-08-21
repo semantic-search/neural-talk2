@@ -20,8 +20,11 @@ RUN apt-get install libssl-dev
 RUN cd CMake && ./bootstrap; make; sudo make install
 
 RUN apt-get install -y python3-pip
-RUN pip3 install install fastapi[all]
-COPY main.py .
+# RUN pip3 install install fastapi[all]
+COPY ./requirements.txt requirements.txt
+RUN pip3 install -r requirements.txt
+
+COPY main.py main.py
 ENV LC_ALL C.UTF-8
 ENV LANG C.UTF-8
 
