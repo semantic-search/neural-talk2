@@ -3,7 +3,7 @@ import uuid
 from db_models.mongo_setup import global_init
 from db_models.models.cache_model import Cache
 import init
-from ocr_service import predict
+from caption_service import predict
 import globals
 import numpy
 import os
