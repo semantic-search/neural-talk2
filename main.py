@@ -1,97 +1,77 @@
 import json
-import subprocess
+import uuid
+from db_models.mongo_setup import global_init
+from db_models.models.cache_model import Cache
+import init
+from ocr_service import predict
+import globals
+import numpy
 import os
-from pathlib import Path
 
 
-# imports for env kafka redis
-from dotenv import load_dotenv
-from kafka import KafkaProducer
-from kafka import KafkaConsumer
-from json import loads
-import base64
-import json
-import os
-import redis
+def send_to_topic(topic, value_to_send_dic):
+    # default=convert only used in this project
+    data_json = json.dumps(value_to_send_dic)
+    init.producer_obj.send(topic, value=data_json)
 
-load_dotenv()
+imageFolder = "images"
+os.mkdir(imageFolder)
 
-KAFKA_HOSTNAME = os.getenv("KAFKA_HOSTNAME")
-KAFKA_PORT = os.getenv("KAFKA_PORT")
-REDIS_HOSTNAME = os.getenv("REDIS_HOSTNAME")
-REDIS_PORT = os.getenv("REDIS_PORT")
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
+if __name__ == "__main__":
+    global_init()
+    print('main fxn')
+    for message in init.consumer_obj:
+        message = message.value
+        db_key = str(message)
+        print(db_key, 'db_key')
+        db_object = Cache.objects.get(pk=db_key)
+        file_name = db_object.file_name
+        init.redis_obj.set(globals.RECEIVE_TOPIC, file_name)
+        print('after redis')
+        if db_object.is_doc_type:
+            """document"""
+            print('in doc type')
+            images_array = []
+            for image in db_object.files:
+                pdf_image = imageFolder + "/" + str(uuid.uuid4()) + ".jpg"
+                with open(pdf_image, 'wb') as file_to_save:
+                    file_to_save.write(image.file.read())
+                images_array.append(pdf_image)
+            captions_list = []
+            for image in images_array:
+                image_results = predict(image, doc=True)
+                captions = image_results["captions"]
+                captions_list.append(captions)
 
-RECEIVE_TOPIC = 'NEURAL_TALK'
-SEND_TOPIC_FULL = "IMAGE_RESULTS"
-SEND_TOPIC_TEXT = "TEXT"
+            full_res = {
+                "container_name": globals.RECEIVE_TOPIC,
+                "file_name": file_name,
+                "captions": captions_list,
+                "is_doc_type": True
+            }
+            text_res = {
+                "container_name": globals.RECEIVE_TOPIC,
+                "file_name": file_name,
+                "captions": captions_list,
+                "is_doc_type": True
+            }
+            print(full_res, "full_res")
+            send_to_topic(globals.SEND_TOPIC_FULL, value_to_send_dic=full_res)
+            send_to_topic(globals.SEND_TOPIC_TEXT, value_to_send_dic=text_res)
+            init.producer_obj.flush()
 
+        else:
+            """image"""
+            print('in image type')
+            if db_object.mime_type in globals.ALLOWED_IMAGE_TYPES:
+                image = imageFolder + "/" + file_name
 
-print(f"kafka : {KAFKA_HOSTNAME}:{KAFKA_PORT}")
-
-# Redis initialize
-r = redis.StrictRedis(host=REDIS_HOSTNAME, port=REDIS_PORT,
-                      password=REDIS_PASSWORD, ssl=True)
-
-# Kafka initialize - To receive img data to process
-consumer = KafkaConsumer(
-    RECEIVE_TOPIC,
-    bootstrap_servers=[f"{KAFKA_HOSTNAME}:{KAFKA_PORT}"],
-    auto_offset_reset="earliest",
-    enable_auto_commit=True,
-    group_id="my-group",
-    value_deserializer=lambda x: loads(x.decode("utf-8")),
-)
-
-# Kafka initialize - For Sending processed img data further
-producer = KafkaProducer(
-    bootstrap_servers=[f"{KAFKA_HOSTNAME}:{KAFKA_PORT}"],
-    value_serializer=lambda x: json.dumps(x).encode("utf-8"),
-)
-
-result_dir = "vis/"
-result_file = result_dir + "vis.json"
-
-for message in consumer:
-    print('xxx--- inside consumer ---xxx')
-    print(f"kafka - - : {KAFKA_HOSTNAME}:{KAFKA_PORT}")
-
-    
-    message = message.value
-    image_id = message['image_id']
-    data = message['data']
-
-    # Setting image-id to topic name(container name), so we can know which image it's currently processing
-    r.set(RECEIVE_TOPIC, image_id)
-
-    folder_path = "image/"
-    # set image path
-    file_path = folder_path + image_id
-    Path(folder_path).mkdir(parents=True, exist_ok=True)
-
-
-    with open(file_path, "wb") as fh:
-        fh.write(base64.b64decode(data.encode("ascii")))
-
-
-    os.system("th eval.lua -model model_id1-501-1448236541.t7 -image_folder images -num_images 1")
-    with open(result_file) as json_file:
-        data = json.load(json_file)
-    caption = []
-    for items in data:
-        caption.append(items["caption"])
-    response = {
-        'image_id': image_id,
-        "captions" : caption,
-    }
-    os.remove(file_path)
-    os.remove(result_dir + "imgs/img1.jpg")
-    os.remove(result_file)
-
-    # sending full and text res(without cordinates or probability) to kafka
-    producer.send(SEND_TOPIC_FULL, value=response)
-    producer.send(SEND_TOPIC_TEXT, value=response)
-
-    producer.flush()
-
-
+                with open(image, 'wb') as file_to_save:
+                    file_to_save.write(db_object.file.read())
+                res = predict(image)
+                res["container_name"] = globals.RECEIVE_TOPIC
+                
+                print(res, 'res')
+                send_to_topic(globals.SEND_TOPIC_FULL, value_to_send_dic=res)
+                send_to_topic(globals.SEND_TOPIC_TEXT, value_to_send_dic=res)
+                init.producer_obj.flush()
