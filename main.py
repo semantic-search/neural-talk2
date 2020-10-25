@@ -19,7 +19,7 @@ os.mkdir(imageFolder)
 
 if __name__ == "__main__":
     global_init()
-    print('main fxn')
+    print('main fxn', globals.RECEIVE_TOPIC)
     for message in init.consumer_obj:
         message = message.value
         db_key = str(message)
